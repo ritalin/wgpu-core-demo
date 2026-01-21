@@ -85,9 +85,9 @@ impl AppState {
         Ok(())
     }
 
-    fn handle(&mut self, id: WindowId, mut callbacl: impl FnMut(&mut Entry)) {
+    fn handle(&mut self, id: WindowId, mut callback: impl FnMut(&mut Entry)) {
         if let Some(entry) = self.app_entries.get_mut(&id) {
-            callbacl(entry);
+            callback(entry);
         }
     }
 
