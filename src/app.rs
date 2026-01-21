@@ -1,23 +1,29 @@
 use std::{collections::HashMap, sync::Arc};
-use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::{KeyEvent, StartCause, WindowEvent}, event_loop::ActiveEventLoop, keyboard::{KeyCode, PhysicalKey}, window::{Window, WindowAttributes, WindowId}};
+use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::{KeyEvent, StartCause, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy}, keyboard::{KeyCode, PhysicalKey}, platform::macos::WindowAttributesExtMacOS, window::{Window, WindowAttributes, WindowId}};
+
+use crate::runtime;
 
 pub struct App {
+    proxy_loop: EventLoopProxy<runtime::UserEvent>,
     suspended: bool,
     state: AppState
 }
 impl App {
-    pub fn new() -> Self {
+    pub fn new(event_loop: &EventLoop<runtime::UserEvent>, terminate_on_empty: bool) -> Self {
         Self {
+            proxy_loop: event_loop.create_proxy(),
             suspended: true,
-            state: AppState::new(),
+            state: AppState::new(terminate_on_empty),
         }
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<runtime::UserEvent> for App {
     fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.state.resume_app();
-        self.suspended = false;
+        if self.state.render_context.is_some() {
+            self.state.resume_app();
+            self.suspended = false;
+        }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -30,13 +36,13 @@ impl ApplicationHandler for App {
         window_id: WindowId,
         event: winit::event::WindowEvent,
     ) {
-        self.state.handle(window_id, |entry| {
+        self.state.handle(window_id, event_loop, |entry, status| {
             match event {
                 WindowEvent::CloseRequested => {
-                    entry.handle_close(event_loop)
+                    *status = HandleStatus::Closed;
                 }
                 WindowEvent::KeyboardInput { event: KeyEvent{ physical_key: PhysicalKey::Code(KeyCode::Escape), .. }, .. } => {
-                    entry.handle_close(event_loop);
+                    *status = HandleStatus::Closed;
                 }
                 WindowEvent::Resized(size) => {
                     entry.handle_resize(size);
@@ -53,9 +59,17 @@ impl ApplicationHandler for App {
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         if cause == StartCause::Init {
-            if self.state.add_new_window(event_loop).is_err() {
-                log::error!("Failed to create new window");
+            if self.state.init_render_context(event_loop, self.proxy_loop.clone()).is_err() {
+                log::error!("Failed to create gpu rendering context");
                 event_loop.exit();
+            }
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: runtime::UserEvent) {
+        match event {
+            runtime::UserEvent::RequestNew => {
+                self.state.add_new_window(event_loop).unwrap();
             }
         }
     }
@@ -63,17 +77,38 @@ impl ApplicationHandler for App {
 
 struct AppState {
     app_entries: HashMap<WindowId, Entry>,
+    render_context: Option<runtime::RenderContext>,
+    terminate_on_empty: bool,
 }
 impl AppState {
     const DEFAULT_SIZE: PhysicalSize<u32> = PhysicalSize::new(1024, 768);
 
-    fn new() -> Self {
+    fn new(terminate_on_empty: bool) -> Self {
         Self {
             app_entries: HashMap::new(),
+            render_context: None,
+            terminate_on_empty,
         }
     }
 
-    pub fn add_new_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), anyhow::Error> {
+    fn init_render_context(&mut self, event_loop: &ActiveEventLoop, event_loop_proxy: EventLoopProxy<runtime::UserEvent>) -> Result<(), anyhow::Error> {
+        let attr = WindowAttributes::default()
+            .with_inner_size(PhysicalSize::new(1, 1))
+            .with_transparent(true)
+            .with_has_shadow(false)
+        ;
+        let window = Arc::new(event_loop.create_window(attr).unwrap());
+
+        let context = runtime::init_render_context(Box::new(WindowWrapper(window)))?;
+        self.render_context = Some(context);
+
+        event_loop_proxy.send_event(runtime::UserEvent::RequestNew).map_err(|err| anyhow::anyhow!("Failed to create new window (reson: {err}"))?;
+        Ok(())
+    }
+
+    fn add_new_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), anyhow::Error> {
+        let Some(_) = self.render_context.as_ref() else { anyhow::bail!("GPU rendering context is not initialized") };
+
         let attr = WindowAttributes::default()
             .with_inner_size(Self::DEFAULT_SIZE)
         ;
@@ -85,9 +120,17 @@ impl AppState {
         Ok(())
     }
 
-    fn handle(&mut self, id: WindowId, mut callback: impl FnMut(&mut Entry)) {
+    fn handle(&mut self, id: WindowId, event_loop: &ActiveEventLoop, mut callback: impl FnMut(&mut Entry, &mut HandleStatus)) {
+        let mut status = HandleStatus::None;
+
         if let Some(entry) = self.app_entries.get_mut(&id) {
-            callback(entry);
+            callback(entry, &mut status);
+        }
+        if status == HandleStatus::Closed {
+            self.app_entries.remove(&id);
+            if self.terminate_on_empty && self.app_entries.is_empty() {
+                event_loop.exit();
+            }
         }
     }
 
@@ -96,6 +139,12 @@ impl AppState {
             entry.window.request_redraw();
         }
     }
+}
+
+#[derive(PartialEq)]
+enum HandleStatus {
+    None,
+    Closed,
 }
 
 struct Entry {
@@ -111,9 +160,6 @@ impl Entry {
             window,
         }
     }
-    fn handle_close(&self, event_loop: &ActiveEventLoop) {
-        event_loop.exit();
-    }
 
     fn handle_resize(&mut self, size: PhysicalSize<u32>) {
         self.dirty_resized = Some((size.width, size.height));
@@ -121,5 +167,17 @@ impl Entry {
 
     fn handle_draw(&self) {
 
+    }
+}
+
+struct WindowWrapper(Arc<Window>);
+
+impl runtime::AsRawWindow for WindowWrapper {
+    fn get_handle(&self) -> Result<runtime::RawWindowHandle, wgpu::rwh::HandleError> {
+        use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
+        Ok(runtime::RawWindowHandle::new(
+            self.0.display_handle()?.as_raw(),
+            self.0.window_handle()?.as_raw(),
+        ))
     }
 }
