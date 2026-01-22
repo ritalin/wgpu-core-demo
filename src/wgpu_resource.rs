@@ -71,3 +71,21 @@ impl AutoDrop for wgpu::wgc::id::TextureViewId {
         let _ = instance.texture_view_drop(*self);
     }
 }
+
+impl AutoDrop for wgpu::wgc::id::ShaderModuleId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        instance.shader_module_drop(*self);
+    }
+}
+
+impl AutoDrop for wgpu::wgc::id::PipelineLayoutId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        instance.pipeline_layout_drop(*self);
+    }
+}
+
+impl AutoDrop for wgpu::wgc::id::RenderPipelineId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        instance.render_pipeline_drop(*self);
+    }
+}

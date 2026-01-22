@@ -62,6 +62,8 @@ impl WgpuRenderer {
 
         let (mut pass, err) = self.context.instance.0.command_encoder_begin_render_pass(encoder.id, &desc);
         if let Some(err) = err { anyhow::bail!("{err}") }
+        self.context.instance.0.render_pass_set_pipeline(&mut pass, self.context.pipeline.id)?;
+        self.context.instance.0.render_pass_draw(&mut pass, 3, 1, 0, 0)?;
         self.context.instance.0.render_pass_end(&mut pass)?;
 
         let desc = wgpu::wgt::CommandBufferDescriptor { label: Some("Finish encode").map(Cow::Borrowed) };

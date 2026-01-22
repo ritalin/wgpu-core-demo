@@ -25,6 +25,7 @@ pub struct RenderContext {
     pub(crate) instance: WgpuInstance,
     pub(crate) device:  AutoDropId<wgpu::wgc::id::DeviceId>,
     pub(crate) queue: AutoDropId<wgpu::wgc::id::QueueId>,
+    pub(crate) pipeline: AutoDropId<wgpu::wgc::id::RenderPipelineId>,
     pub(crate) config: wgpu::wgt::SurfaceConfiguration<Vec<wgpu::wgt::TextureFormat>>,
 }
 
@@ -69,9 +70,76 @@ pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<Ren
         view_formats: vec![],
     };
 
+    let desc = wgpu::wgc::binding_model::PipelineLayoutDescriptor {
+        label: Some("Render pipeline layout").map(Cow::Borrowed),
+        bind_group_layouts: Cow::Borrowed(&[]),
+        immediate_size: 0,
+    };
+    let (layout_id, err) = instance.0.device_create_pipeline_layout(device_id, &desc, None);
+    let layout = instance.as_auto_drop(layout_id);
+    if let Some(err) = err { anyhow::bail!("{err}") }
+
+    let source = wgpu::wgc::pipeline::ShaderModuleSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl")));
+    let desc = wgpu::wgc::pipeline::ShaderModuleDescriptor {
+        label: Some("Shader").map(Cow::Borrowed),
+        runtime_checks: wgpu::wgt::ShaderRuntimeChecks::checked(),
+    };
+    let (shader_id, err) = instance.0.device_create_shader_module(device_id, &desc, source, None);
+    let shader = instance.as_auto_drop(shader_id);
+    if let Some(err) = err { anyhow::bail!("{err}") }
+
+    let desc = wgpu::wgc::pipeline::RenderPipelineDescriptor {
+        label: Some("Render pipeline").map(Cow::Borrowed),
+        layout: Some(layout.id),
+        vertex: wgpu::wgc::pipeline::VertexState {
+            stage: wgpu::wgc::pipeline::ProgrammableStageDescriptor {
+                module: shader.id,
+                entry_point: Some("vs_main").map(Cow::Borrowed),
+                constants: wgpu::naga::back::PipelineConstants::default(),
+                zero_initialize_workgroup_memory: false,
+            },
+            buffers: Cow::Borrowed(&[]),
+        },
+        fragment: Some(wgpu::wgc::pipeline::FragmentState {
+            stage: wgpu::wgc::pipeline::ProgrammableStageDescriptor {
+                module: shader.id,
+                entry_point: Some("fs_main").map(Cow::Borrowed),
+                constants: wgpu::naga::back::PipelineConstants::default(),
+                zero_initialize_workgroup_memory: false,
+            },
+            targets: Cow::Borrowed(&[
+                Some(wgpu::wgt::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::wgt::BlendState::REPLACE),
+                    write_mask: wgpu::wgt::ColorWrites::ALL,
+                })
+            ]),
+        }),
+        primitive: wgpu::wgt::PrimitiveState {
+            topology: wgpu::wgt::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::wgt::FrontFace::Ccw,
+            cull_mode: Some(wgpu::wgt::Face::Back),
+            polygon_mode: wgpu::wgt::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        multisample: wgpu::wgt::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        depth_stencil: None,
+        multiview_mask: None,
+        cache: None,
+    };
+    let (pipeline_id, err) = instance.0.device_create_render_pipeline(device_id, &desc, None);
+    if let Some(err) = err { anyhow::bail!("{err}") }
+
     Ok(RenderContext{
         device: instance.as_auto_drop(device_id),
         queue: instance.as_auto_drop(queue_id),
+        pipeline: instance.as_auto_drop(pipeline_id),
         instance,
         config,
     })
