@@ -1,5 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
+use crate::wgpu_resource::{AutoDropId, WgpuInstance};
+
 pub enum UserEvent {
     RequestNew,
 }
@@ -19,12 +21,10 @@ impl RawWindowHandle {
     }
 }
 
-type WgpuInstance = Arc<wgpu::wgc::global::Global>;
-
 pub struct RenderContext {
     instance: WgpuInstance,
-    device_id:  wgpu::wgc::id::DeviceId,
-    queue_id: wgpu::wgc::id::QueueId,
+    device:  AutoDropId<wgpu::wgc::id::DeviceId>,
+    queue: AutoDropId<wgpu::wgc::id::QueueId>,
 }
 
 pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<RenderContext, anyhow::Error> {
@@ -32,17 +32,18 @@ pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<Ren
         backends: wgpu::wgt::Backends::PRIMARY,
         ..Default::default()
     };
-    let instance = Arc::new(wgpu::wgc::global::Global::new("gpu", &desc, None));
+    let instance = WgpuInstance(Arc::new(wgpu::wgc::global::Global::new("gpu", &desc, None)));
 
     let handle = target.get_handle().unwrap();
-    let surface_id = unsafe { instance.instance_create_surface(handle.display_handle, handle.window_handle, None) }.unwrap();
+    let surface_id = unsafe { instance.0.instance_create_surface(handle.display_handle, handle.window_handle, None) }.unwrap();
 
     let desc = wgpu::wgt::RequestAdapterOptions {
         power_preference: wgpu::wgt::PowerPreference::default(),
         force_fallback_adapter: false,
         compatible_surface: Some(surface_id),
     };
-    let adapter_id = instance.request_adapter(&desc, wgpu::wgt::Backends::all(), None)?;
+    let adapter_id: wgpu::wgc::id::AdapterId = instance.0.request_adapter(&desc, wgpu::wgt::Backends::all(), None)?;
+    let adapter = instance.as_auto_drop(adapter_id);
 
     let desc = wgpu::wgt::DeviceDescriptor {
         label: Some("Fetch the driver and the queue"),
@@ -52,13 +53,11 @@ pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<Ren
         memory_hints: wgpu::wgt::MemoryHints::default(),
         trace: wgpu::wgt::Trace::Off,
     };
-    let (device_id, queue_id) = instance.adapter_request_device(adapter_id, &desc.map_label(|s| s.map(Cow::Borrowed)), None, None)?;
-
-    instance.adapter_drop(adapter_id);
+    let (device_id, queue_id) = instance.0.adapter_request_device(adapter.id, &desc.map_label(|s| s.map(Cow::Borrowed)), None, None)?;
 
     Ok(RenderContext{
+        device: instance.as_auto_drop(device_id),
+        queue: instance.as_auto_drop(queue_id),
         instance,
-        device_id,
-        queue_id,
     })
 }

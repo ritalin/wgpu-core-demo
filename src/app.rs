@@ -77,7 +77,7 @@ impl ApplicationHandler<runtime::UserEvent> for App {
 
 struct AppState {
     app_entries: HashMap<WindowId, Entry>,
-    render_context: Option<runtime::RenderContext>,
+    render_context: Option<Arc<runtime::RenderContext>>,
     terminate_on_empty: bool,
 }
 impl AppState {
@@ -100,7 +100,7 @@ impl AppState {
         let window = Arc::new(event_loop.create_window(attr).unwrap());
 
         let context = runtime::init_render_context(Box::new(WindowWrapper(window)))?;
-        self.render_context = Some(context);
+        self.render_context = Some(Arc::new(context));
 
         event_loop_proxy.send_event(runtime::UserEvent::RequestNew).map_err(|err| anyhow::anyhow!("Failed to create new window (reson: {err}"))?;
         Ok(())

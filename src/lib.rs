@@ -2,6 +2,7 @@ use winit::event_loop::EventLoop;
 pub mod app;
 
 mod runtime;
+mod wgpu_resource;
 
 pub async fn run() -> Result<(), anyhow::Error> {
     let event_loop = EventLoop::with_user_event().build()?;
