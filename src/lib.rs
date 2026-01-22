@@ -2,6 +2,7 @@ use winit::event_loop::EventLoop;
 pub mod app;
 
 mod runtime;
+mod render;
 mod wgpu_resource;
 
 pub async fn run() -> Result<(), anyhow::Error> {

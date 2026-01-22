@@ -41,3 +41,9 @@ impl AutoDrop for wgpu::wgc::id::QueueId {
         instance.queue_drop(*self);
     }
 }
+
+impl AutoDrop for wgpu::wgc::id::SurfaceId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        instance.surface_drop(*self);
+    }
+}

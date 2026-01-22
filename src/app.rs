@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::{KeyEvent, StartCause, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy}, keyboard::{KeyCode, PhysicalKey}, platform::macos::WindowAttributesExtMacOS, window::{Window, WindowAttributes, WindowId}};
 
-use crate::runtime;
+use crate::{render, runtime};
 
 pub struct App {
     proxy_loop: EventLoopProxy<runtime::UserEvent>,
@@ -107,16 +107,16 @@ impl AppState {
     }
 
     fn add_new_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), anyhow::Error> {
-        let Some(_) = self.render_context.as_ref() else { anyhow::bail!("GPU rendering context is not initialized") };
+        let Some(context) = self.render_context.as_ref() else { anyhow::bail!("GPU rendering context is not initialized") };
 
         let attr = WindowAttributes::default()
             .with_inner_size(Self::DEFAULT_SIZE)
         ;
         let window = Arc::new(event_loop.create_window(attr)?);
+        let surface_id = runtime::create_surface(context, WindowWrapper(window.clone()))?;
+        let renderer = render::WgpuRenderer::new(context.clone(), surface_id, (Self::DEFAULT_SIZE.width, Self::DEFAULT_SIZE.height));
 
-        //
-
-        self.app_entries.insert(window.id(), Entry::new(window));
+        self.app_entries.insert(window.id(), Entry::new(window, renderer));
         Ok(())
     }
 
@@ -150,14 +150,16 @@ enum HandleStatus {
 struct Entry {
     dirty_resized: Option<(u32, u32)>,
     window: Arc<Window>,
+    renderer: render::WgpuRenderer,
 }
 impl Entry {
-    fn new(window: Arc<Window>) -> Self {
+    fn new(window: Arc<Window>, renderer: render::WgpuRenderer) -> Self {
         let size = window.inner_size();
 
         Self {
             dirty_resized: Some((size.width, size.height)),
             window,
+            renderer,
         }
     }
 
@@ -165,8 +167,10 @@ impl Entry {
         self.dirty_resized = Some((size.width, size.height));
     }
 
-    fn handle_draw(&self) {
-
+    fn handle_draw(&mut self) {
+        if let Some(size) = self.dirty_resized.take() {
+            self.renderer.request_resize(size);
+        }
     }
 }
 

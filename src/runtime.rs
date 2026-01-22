@@ -22,9 +22,10 @@ impl RawWindowHandle {
 }
 
 pub struct RenderContext {
-    instance: WgpuInstance,
-    device:  AutoDropId<wgpu::wgc::id::DeviceId>,
-    queue: AutoDropId<wgpu::wgc::id::QueueId>,
+    pub(crate) instance: WgpuInstance,
+    pub(crate) device:  AutoDropId<wgpu::wgc::id::DeviceId>,
+    pub(crate) queue: AutoDropId<wgpu::wgc::id::QueueId>,
+    pub(crate) config: wgpu::wgt::SurfaceConfiguration<Vec<wgpu::wgt::TextureFormat>>,
 }
 
 pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<RenderContext, anyhow::Error> {
@@ -55,9 +56,31 @@ pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<Ren
     };
     let (device_id, queue_id) = instance.0.adapter_request_device(adapter.id, &desc.map_label(|s| s.map(Cow::Borrowed)), None, None)?;
 
+    let caps = instance.0.surface_get_capabilities(surface_id, adapter.id)?;
+    let format = caps.formats.iter().find(|fmt| fmt.is_srgb()).cloned().unwrap_or(caps.formats[0]);
+    let config = wgpu::wgt::SurfaceConfiguration {
+        usage: wgpu::wgt::TextureUsages::RENDER_ATTACHMENT,
+        format,
+        width: 0,
+        height: 0,
+        present_mode: caps.present_modes[0],
+        desired_maximum_frame_latency: 2,
+        alpha_mode: caps.alpha_modes[0],
+        view_formats: vec![],
+    };
+
     Ok(RenderContext{
         device: instance.as_auto_drop(device_id),
         queue: instance.as_auto_drop(queue_id),
         instance,
+        config,
     })
+}
+
+pub fn create_surface(context: &RenderContext, target: impl AsRawWindow) -> Result<wgpu::wgc::id::SurfaceId, anyhow::Error> {
+    let handle = target.get_handle()?;
+    let surface_id = unsafe {
+        context.instance.0.instance_create_surface(handle.display_handle, handle.window_handle, None)?
+    };
+    Ok(surface_id)
 }
