@@ -171,6 +171,9 @@ impl Entry {
         if let Some(size) = self.dirty_resized.take() {
             self.renderer.request_resize(size);
         }
+
+        self.renderer.render().unwrap();
+        self.window.request_redraw();
     }
 }
 

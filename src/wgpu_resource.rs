@@ -47,3 +47,27 @@ impl AutoDrop for wgpu::wgc::id::SurfaceId {
         instance.surface_drop(*self);
     }
 }
+
+impl AutoDrop for wgpu::wgc::id::CommandEncoderId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        instance.command_encoder_drop(*self);
+    }
+}
+
+impl AutoDrop for wgpu::wgc::id::CommandBufferId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        instance.command_buffer_drop(*self);
+    }
+}
+
+impl AutoDrop for wgpu::wgc::id::TextureId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        instance.texture_drop(*self);
+    }
+}
+
+impl AutoDrop for wgpu::wgc::id::TextureViewId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        let _ = instance.texture_view_drop(*self);
+    }
+}
