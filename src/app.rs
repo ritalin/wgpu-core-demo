@@ -59,8 +59,8 @@ impl ApplicationHandler<runtime::UserEvent> for App {
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         if cause == StartCause::Init {
-            if self.state.init_render_context(event_loop, self.proxy_loop.clone()).is_err() {
-                log::error!("Failed to create gpu rendering context");
+            if let Err(err) = self.state.init_render_context(event_loop, self.proxy_loop.clone()) {
+                log::error!("Failed to create gpu rendering context (cause: {err})");
                 event_loop.exit();
             }
         }

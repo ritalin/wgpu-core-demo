@@ -26,6 +26,7 @@ pub struct RenderContext {
     pub(crate) device:  AutoDropId<wgpu::wgc::id::DeviceId>,
     pub(crate) queue: AutoDropId<wgpu::wgc::id::QueueId>,
     pub(crate) pipeline: AutoDropId<wgpu::wgc::id::RenderPipelineId>,
+    pub(crate) bing_group_layout: AutoDropId<wgpu::wgc::id::BindGroupLayoutId>,
     pub(crate) config: wgpu::wgt::SurfaceConfiguration<Vec<wgpu::wgt::TextureFormat>>,
 }
 
@@ -70,9 +71,34 @@ pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<Ren
         view_formats: vec![],
     };
 
+    let desc = wgpu::wgc::binding_model::BindGroupLayoutDescriptor {
+        label: Some("Diffuse texture bind group layout").map(Cow::Borrowed),
+        entries: Cow::Borrowed(&[
+            wgpu::wgt::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::wgt::ShaderStages::FRAGMENT,
+                ty: wgpu::wgt::BindingType::Texture {
+                    sample_type: wgpu::wgt::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::wgt::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::wgt::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::wgt::ShaderStages::FRAGMENT,
+                ty: wgpu::wgt::BindingType::Sampler(wgpu::wgt::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ]),
+    };
+    let (layout_id, err) = instance.0.device_create_bind_group_layout(device_id, &desc, None);
+    let bing_group_layout = instance.as_auto_drop(layout_id);
+    if let Some(err) = err { anyhow::bail!("{err}") }
+
     let desc = wgpu::wgc::binding_model::PipelineLayoutDescriptor {
         label: Some("Render pipeline layout").map(Cow::Borrowed),
-        bind_group_layouts: Cow::Borrowed(&[]),
+        bind_group_layouts: Cow::Borrowed(&[bing_group_layout.id]),
         immediate_size: 0,
     };
     let (layout_id, err) = instance.0.device_create_pipeline_layout(device_id, &desc, None);
@@ -134,12 +160,14 @@ pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<Ren
         cache: None,
     };
     let (pipeline_id, err) = instance.0.device_create_render_pipeline(device_id, &desc, None);
+    let pipeline = instance.as_auto_drop(pipeline_id);
     if let Some(err) = err { anyhow::bail!("{err}") }
 
     Ok(RenderContext{
         device: instance.as_auto_drop(device_id),
         queue: instance.as_auto_drop(queue_id),
-        pipeline: instance.as_auto_drop(pipeline_id),
+        pipeline,
+        bing_group_layout,
         instance,
         config,
     })
