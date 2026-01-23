@@ -11,6 +11,7 @@ pub struct WgpuRenderer {
     surface: AutoDropId<SurfaceId>,
     config: SurfaceConfiguration<Vec<TextureFormat>>,
     vertex_buffer: AutoDropId<BufferId>,
+    index_buffer: AutoDropId<BufferId>,
 }
 impl WgpuRenderer {
     pub fn new(context: Arc<runtime::RenderContext>, surface_id: SurfaceId, (width, height): (u32, u32)) -> Result<Self, anyhow::Error> {
@@ -18,7 +19,7 @@ impl WgpuRenderer {
         config.width = width;
         config.height = height;
 
-        let vertex_size = (crate::VERTEXIES.len() * size_of::<crate::Vertex>()) as u64;
+        let vertex_size = (crate::VERTICES.len() * size_of::<crate::Vertex>()) as u64;
 
         let desc = wgpu::wgt::BufferDescriptor {
             label: Some("Vertex buffer").map(Cow::Borrowed),
@@ -30,11 +31,23 @@ impl WgpuRenderer {
         let vbuffer = context.instance.as_auto_drop(buffer_id);
         if let Some(err) = err { anyhow::bail!("{err}") }
 
+        let index_size = (crate::INDICES.len() * size_of::<u32>()) as u64;
+        let desc = wgpu::wgt::BufferDescriptor {
+            label: Some("Index buffer").map(Cow::Borrowed),
+            size: index_size,
+            mapped_at_creation: false, // For staging copy
+            usage: wgpu::wgt::BufferUsages::INDEX | wgpu::wgt::BufferUsages::COPY_DST,
+        };
+        let (buffer_id, err) = context.instance.0.device_create_buffer(context.device.id, &desc, None);
+        let ibuffer = context.instance.as_auto_drop(buffer_id);
+        if let Some(err) = err { anyhow::bail!("{err}") }
+
         Ok(Self {
             surface: context.instance.as_auto_drop(surface_id),
             config,
             context,
             vertex_buffer: vbuffer,
+            index_buffer: ibuffer,
         })
     }
 
@@ -49,9 +62,8 @@ impl WgpuRenderer {
     #[track_caller]
     pub fn render(&mut self) -> Result<(), anyhow::Error> {
         // copy vertex data
-        let source = bytemuck::cast_slice(crate::VERTEXIES);
-        let vertex_len = crate::VERTEXIES.len() as u32;
-        let vertex_size = BufferSize::new((crate::VERTEXIES.len() * size_of::<crate::Vertex>()) as u64).unwrap();
+        let source = bytemuck::cast_slice(crate::VERTICES);
+        let vertex_size = BufferSize::new((crate::VERTICES.len() * size_of::<crate::Vertex>()) as u64).unwrap();
 
         let (vertex_staging_id, vertex_staging_offset) = self.context.instance.0.queue_create_staging_buffer(
             self.context.queue.id,
@@ -66,6 +78,26 @@ impl WgpuRenderer {
             self.vertex_buffer.id,
             0, // dst offset
             vertex_staging_id
+        )?;
+
+        // copy index data
+        let source = bytemuck::cast_slice(crate::INDICES);
+        let index_len = crate::INDICES.len() as u32;
+        let index_size = BufferSize::new((crate::INDICES.len() * size_of::<u32>()) as u64).unwrap();
+
+        let (index_staging_id, index_staging_offset) = self.context.instance.0.queue_create_staging_buffer(
+            self.context.queue.id,
+            index_size,
+            None
+        )?;
+
+        let slice = unsafe { std::slice::from_raw_parts_mut(index_staging_offset.as_ptr(), source.len()) };
+        slice.copy_from_slice(source);
+        self.context.instance.0.queue_write_staging_buffer(
+            self.context.queue.id,
+            self.index_buffer.id,
+            0, // dst offset
+            index_staging_id
         )?;
 
         let desc = wgpu::wgt::CommandEncoderDescriptor { label: Some("Begin encode").map(Cow::Borrowed) };
@@ -101,7 +133,8 @@ impl WgpuRenderer {
         if let Some(err) = err { anyhow::bail!("{err}") }
         self.context.instance.0.render_pass_set_pipeline(&mut pass, self.context.pipeline.id)?;
         self.context.instance.0.render_pass_set_vertex_buffer(&mut pass, 0, self.vertex_buffer.id, 0, None)?; // offset <- vertex buffer offset, size <- vertex buffer size
-        self.context.instance.0.render_pass_draw(&mut pass, vertex_len, 1, 0, 0)?;
+        self.context.instance.0.render_pass_set_index_buffer(&mut pass, self.index_buffer.id, wgpu::wgt::IndexFormat::Uint32, 0, None)?;
+        self.context.instance.0.render_pass_draw_indexed(&mut pass, index_len, 1, 0, 0, 0)?;
         self.context.instance.0.render_pass_end(&mut pass)?;
 
         let desc = wgpu::wgt::CommandBufferDescriptor { label: Some("Finish encode").map(Cow::Borrowed) };
