@@ -114,7 +114,7 @@ impl AppState {
         ;
         let window = Arc::new(event_loop.create_window(attr)?);
         let surface_id = runtime::create_surface(context, WindowWrapper(window.clone()))?;
-        let renderer = render::WgpuRenderer::new(context.clone(), surface_id, (Self::DEFAULT_SIZE.width, Self::DEFAULT_SIZE.height));
+        let renderer = render::WgpuRenderer::new(context.clone(), surface_id, (Self::DEFAULT_SIZE.width, Self::DEFAULT_SIZE.height))?;
 
         self.app_entries.insert(window.id(), Entry::new(window, renderer));
         Ok(())

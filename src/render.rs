@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
+use wgpu::BufferSize;
+use wgpu::wgc::id::BufferId;
 use wgpu::{wgc::id::SurfaceId, wgt::SurfaceConfiguration};
 use wgpu::wgt::TextureFormat;
 use crate::{runtime, wgpu_resource::AutoDropId};
@@ -8,18 +10,32 @@ pub struct WgpuRenderer {
     context: Arc<runtime::RenderContext>,
     surface: AutoDropId<SurfaceId>,
     config: SurfaceConfiguration<Vec<TextureFormat>>,
+    vertex_buffer: AutoDropId<BufferId>,
 }
 impl WgpuRenderer {
-    pub fn new(context: Arc<runtime::RenderContext>, surface_id: SurfaceId, (width, height): (u32, u32)) -> Self {
+    pub fn new(context: Arc<runtime::RenderContext>, surface_id: SurfaceId, (width, height): (u32, u32)) -> Result<Self, anyhow::Error> {
         let mut config = context.config.clone();
         config.width = width;
         config.height = height;
 
-        Self {
+        let vertex_size = (crate::VERTEXIES.len() * size_of::<crate::Vertex>()) as u64;
+
+        let desc = wgpu::wgt::BufferDescriptor {
+            label: Some("Vertex buffer").map(Cow::Borrowed),
+            size: vertex_size,
+            mapped_at_creation: false, // For staging copy
+            usage: wgpu::wgt::BufferUsages::VERTEX | wgpu::wgt::BufferUsages::COPY_DST,
+        };
+        let (buffer_id, err) = context.instance.0.device_create_buffer(context.device.id, &desc, None);
+        let vbuffer = context.instance.as_auto_drop(buffer_id);
+        if let Some(err) = err { anyhow::bail!("{err}") }
+
+        Ok(Self {
             surface: context.instance.as_auto_drop(surface_id),
             config,
             context,
-        }
+            vertex_buffer: vbuffer,
+        })
     }
 
     pub fn request_resize(&mut self, (width, height): (u32, u32)) {
@@ -30,7 +46,28 @@ impl WgpuRenderer {
         }
     }
 
-    pub fn render(&self) -> Result<(), anyhow::Error> {
+    #[track_caller]
+    pub fn render(&mut self) -> Result<(), anyhow::Error> {
+        // copy vertex data
+        let source = bytemuck::cast_slice(crate::VERTEXIES);
+        let vertex_len = crate::VERTEXIES.len() as u32;
+        let vertex_size = BufferSize::new((crate::VERTEXIES.len() * size_of::<crate::Vertex>()) as u64).unwrap();
+
+        let (vertex_staging_id, vertex_staging_offset) = self.context.instance.0.queue_create_staging_buffer(
+            self.context.queue.id,
+            vertex_size,
+            None
+        )?;
+
+        let slice = unsafe { std::slice::from_raw_parts_mut(vertex_staging_offset.as_ptr(), source.len()) };
+        slice.copy_from_slice(source);
+        self.context.instance.0.queue_write_staging_buffer(
+            self.context.queue.id,
+            self.vertex_buffer.id,
+            0, // dst offset
+            vertex_staging_id
+        )?;
+
         let desc = wgpu::wgt::CommandEncoderDescriptor { label: Some("Begin encode").map(Cow::Borrowed) };
         let (encoder_id, err) = self.context.instance.0.device_create_command_encoder(self.context.device.id, &desc, None);
         let encoder = self.context.instance.as_auto_drop(encoder_id);
@@ -63,7 +100,8 @@ impl WgpuRenderer {
         let (mut pass, err) = self.context.instance.0.command_encoder_begin_render_pass(encoder.id, &desc);
         if let Some(err) = err { anyhow::bail!("{err}") }
         self.context.instance.0.render_pass_set_pipeline(&mut pass, self.context.pipeline.id)?;
-        self.context.instance.0.render_pass_draw(&mut pass, 3, 1, 0, 0)?;
+        self.context.instance.0.render_pass_set_vertex_buffer(&mut pass, 0, self.vertex_buffer.id, 0, None)?; // offset <- vertex buffer offset, size <- vertex buffer size
+        self.context.instance.0.render_pass_draw(&mut pass, vertex_len, 1, 0, 0)?;
         self.context.instance.0.render_pass_end(&mut pass)?;
 
         let desc = wgpu::wgt::CommandBufferDescriptor { label: Some("Finish encode").map(Cow::Borrowed) };

@@ -89,3 +89,9 @@ impl AutoDrop for wgpu::wgc::id::RenderPipelineId {
         instance.render_pipeline_drop(*self);
     }
 }
+
+impl AutoDrop for wgpu::wgc::id::BufferId {
+    fn drop_id(&self, instance: &wgpu::wgc::global::Global) {
+        instance.buffer_drop(*self);
+    }
+}

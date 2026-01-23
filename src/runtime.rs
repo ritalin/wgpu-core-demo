@@ -98,7 +98,7 @@ pub fn init_render_context(target: Box<dyn AsRawWindow + 'static>) -> Result<Ren
                 constants: wgpu::naga::back::PipelineConstants::default(),
                 zero_initialize_workgroup_memory: false,
             },
-            buffers: Cow::Borrowed(&[]),
+            buffers: Cow::Borrowed(&[crate::Vertex::desc()]),
         },
         fragment: Some(wgpu::wgc::pipeline::FragmentState {
             stage: wgpu::wgc::pipeline::ProgrammableStageDescriptor {
